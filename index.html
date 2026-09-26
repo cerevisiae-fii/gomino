@@ -96,20 +96,30 @@
         </div>
 
         <!-- ゲーム操作ボタンエリア -->
-        <div class="w-full flex flex-col gap-2">
-            <div class="flex justify-between items-center gap-2">
-                <!-- 設置向き切り替え -->
-                <button id="btnOrientation" class="flex-1 py-2 px-3 text-xs sm:text-sm font-bold border rounded-lg active:scale-95 transition-all flex items-center justify-center gap-1.5">
-                    <span>設置向き:</span>
-                    <span id="orientationLabel" class="underline decoration-2">自動 (辺タップ)</span>
-                </button>
+        <div class="w-full flex justify-between items-center gap-3">
+            <button id="btnPass" class="flex-1 py-2.5 px-4 text-xs sm:text-sm font-bold border rounded-xl hover:opacity-80 active:scale-95 transition-all shadow-sm">
+                パス
+            </button>
+            <button id="btnResign" class="flex-1 py-2.5 px-4 text-xs sm:text-sm font-bold border border-red-500/50 text-red-600 rounded-xl hover:bg-red-500/10 active:scale-95 transition-all shadow-sm">
+                投了
+            </button>
+        </div>
 
-                <!-- パス & 投了 -->
-                <button id="btnPass" class="px-4 py-2 text-xs sm:text-sm font-medium border rounded-lg hover:opacity-80 active:scale-95 transition-all">
-                    パス
+        <!-- 死に石選択フェーズ用バナー -->
+        <div id="bannerDeadStones" class="hidden w-full flex flex-col gap-2 p-3 bg-amber-50 text-amber-900 text-xs sm:text-sm rounded-xl border border-amber-200 shadow-sm">
+            <div class="flex items-center justify-between font-bold">
+                <span>⚠️ 死に石選択フェーズ</span>
+                <span class="text-xs opacity-75">死に石をタップして指定</span>
+            </div>
+            <p class="text-xs text-amber-800/90 leading-relaxed">
+                地の中に残った相手の死に石をタップしてマーキングしてください。完了したら「確定して集計」を押します。
+            </p>
+            <div class="flex gap-2 pt-1">
+                <button id="btnCancelDeadStones" class="flex-1 py-1.5 px-3 bg-white border border-amber-300 font-bold rounded-lg hover:bg-amber-100 transition-all text-amber-900">
+                    対局再開
                 </button>
-                <button id="btnResign" class="px-4 py-2 text-xs sm:text-sm font-medium border border-red-500/50 text-red-600 rounded-lg hover:bg-red-500/10 active:scale-95 transition-all">
-                    投了
+                <button id="btnConfirmDeadStones" class="flex-1 py-1.5 px-3 bg-amber-900 text-white font-bold rounded-lg hover:bg-amber-800 transition-all">
+                    確定して集計
                 </button>
             </div>
         </div>
@@ -407,11 +417,12 @@
         let dominoes = []; // [{ id, player, p1, p2 }]
         let turn = 1; // 1:黒, 2:白
         let captures = { 1: 0, 2: 0 };
-        let orientation = 'H'; // バックコンパチ用
         let komi = 6.5;
         let consecutivePasses = 0;
         let gameOver = false;
         let gameResultData = null;
+        let gamePhase = 'playing'; // 'playing' | 'dead_stone_selection' | 'ended'
+        let deadStones = new Set(); // 死に石としてマークされたマス(idx)の集合
 
         // モード & 設定
         let gameMode = 'local'; // 'local' | 'ai' | 'online'
@@ -436,8 +447,6 @@
         const blackCapturesEl = document.getElementById('blackCaptures');
         const whiteCapturesEl = document.getElementById('whiteCaptures');
         const komiDisplay = document.getElementById('komiDisplay');
-        const orientationLabel = document.getElementById('orientationLabel');
-        const btnOrientation = document.getElementById('btnOrientation');
         const btnPass = document.getElementById('btnPass');
         const btnResign = document.getElementById('btnResign');
         const btnOpenSettings = document.getElementById('btnOpenSettings');
@@ -463,6 +472,9 @@
         const bannerResult = document.getElementById('bannerResult');
         const btnShowResultModal = document.getElementById('btnShowResultModal');
         const aiThinkingOverlay = document.getElementById('aiThinkingOverlay');
+        const bannerDeadStones = document.getElementById('bannerDeadStones');
+        const btnCancelDeadStones = document.getElementById('btnCancelDeadStones');
+        const btnConfirmDeadStones = document.getElementById('btnConfirmDeadStones');
 
         // ==========================================
         // 4. カプセル (丸棒/ウィンナー型) 描画 & Canvas
@@ -597,7 +609,17 @@
                     const fill = dom.player === 1 ? currentTheme.p1Fill : currentTheme.p2Fill;
                     const stroke = dom.player === 1 ? currentTheme.p1Stroke : currentTheme.p2Stroke;
 
-                    drawCapsule(ctx, x1, y1, x2, y2, r, fill, stroke, 2);
+                    const isDead = deadStones.has(idx1) || deadStones.has(idx2);
+                    if (isDead) {
+                        ctx.save();
+                        ctx.globalAlpha = 0.35;
+                        drawCapsule(ctx, x1, y1, x2, y2, r, fill, stroke, 2);
+                        ctx.restore();
+                        if (deadStones.has(idx1)) drawDeadMarker(x1, y1, r);
+                        if (deadStones.has(idx2)) drawDeadMarker(x2, y2, r);
+                    } else {
+                        drawCapsule(ctx, x1, y1, x2, y2, r, fill, stroke, 2);
+                    }
                 }
             });
 
@@ -621,16 +643,45 @@
                         const fill = val === 1 ? currentTheme.p1Fill : currentTheme.p2Fill;
                         const stroke = val === 1 ? currentTheme.p1Stroke : currentTheme.p2Stroke;
 
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-                        ctx.fillStyle = fill;
-                        ctx.fill();
-                        ctx.strokeStyle = stroke;
-                        ctx.lineWidth = 2;
-                        ctx.stroke();
+                        const isDead = deadStones.has(idx);
+                        if (isDead) {
+                            ctx.save();
+                            ctx.globalAlpha = 0.35;
+                            ctx.beginPath();
+                            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                            ctx.fillStyle = fill;
+                            ctx.fill();
+                            ctx.strokeStyle = stroke;
+                            ctx.lineWidth = 2;
+                            ctx.stroke();
+                            ctx.restore();
+                            drawDeadMarker(cx, cy, r);
+                        } else {
+                            ctx.beginPath();
+                            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                            ctx.fillStyle = fill;
+                            ctx.fill();
+                            ctx.strokeStyle = stroke;
+                            ctx.lineWidth = 2;
+                            ctx.stroke();
+                        }
                     }
                 }
             }
+        }
+
+        function drawDeadMarker(cx, cy, r) {
+            ctx.save();
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 3;
+            const offset = r * 0.45;
+            ctx.beginPath();
+            ctx.moveTo(cx - offset, cy - offset);
+            ctx.lineTo(cx + offset, cy + offset);
+            ctx.moveTo(cx + offset, cy - offset);
+            ctx.lineTo(cx - offset, cy + offset);
+            ctx.stroke();
+            ctx.restore();
         }
 
         function drawPreview(x, y, orient, padding, cellSize) {
@@ -714,11 +765,10 @@
         }
 
         function handleMouseMove(e) {
-            if (gameOver || !isMyTurn()) return;
+            if (gameOver || gamePhase === 'dead_stone_selection' || !isMyTurn()) return;
             const pos = getGridPosFromEvent(e);
             if (pos) {
                 previewPos = pos;
-                orientationLabel.textContent = pos.orientation === 'H' ? '横 [ H ]' : '縦 [ V ]';
                 render();
             }
         }
@@ -731,7 +781,29 @@
 
         function handleClick(e) {
             soundManager.init();
-            if (gameOver || !isMyTurn()) return;
+            if (gameOver) return;
+
+            // 死に石選択フェーズ時
+            if (gamePhase === 'dead_stone_selection') {
+                const { padding, cellSize } = getBoardMetrics();
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                if (clientX === undefined || clientY === undefined) return;
+
+                const x = Math.round((clientX - rect.left - padding) / cellSize);
+                const y = Math.round((clientY - rect.top - padding) / cellSize);
+
+                if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) {
+                    const idx = y * BOARD_SIZE + x;
+                    if (board[idx] !== 0) {
+                        toggleDeadGroup(idx);
+                    }
+                }
+                return;
+            }
+
+            if (!isMyTurn()) return;
 
             const pos = getGridPosFromEvent(e);
             if (!pos) return;
@@ -751,9 +823,44 @@
             } else {
                 // 1タップ目: プレビュー選択
                 previewPos = pos;
-                orientationLabel.textContent = pos.orientation === 'H' ? '横 [ H ]' : '縦 [ V ]';
                 render();
             }
+        }
+
+        function toggleDeadGroup(startIdx) {
+            const color = board[startIdx];
+            if (color === 0) return;
+
+            const group = getConnectedGroup(startIdx, color);
+            const isDead = deadStones.has(startIdx);
+
+            group.forEach(i => {
+                if (isDead) {
+                    deadStones.delete(i);
+                } else {
+                    deadStones.add(i);
+                }
+            });
+            soundManager.playClick();
+            render();
+        }
+
+        function getConnectedGroup(startIdx, color) {
+            const visited = new Set();
+            const queue = [startIdx];
+            visited.add(startIdx);
+
+            while (queue.length > 0) {
+                const curr = queue.shift();
+                const neighbors = getNeighbors(curr);
+                neighbors.forEach(n => {
+                    if (board[n] === color && !visited.has(n)) {
+                        visited.add(n);
+                        queue.push(n);
+                    }
+                });
+            }
+            return Array.from(visited);
         }
 
         function isMyTurn() {
@@ -1026,11 +1133,11 @@
 
         function handlePass() {
             soundManager.playClick();
-            if (gameOver || !isMyTurn()) return;
+            if (gameOver || gamePhase !== 'playing' || !isMyTurn()) return;
 
             consecutivePasses++;
             if (consecutivePasses >= 2) {
-                endGameByScore();
+                startDeadStoneSelectionPhase();
             } else {
                 turn = turn === 1 ? 2 : 1;
                 updateUI();
@@ -1043,6 +1150,40 @@
                 }
             }
         }
+
+        function startDeadStoneSelectionPhase() {
+            gamePhase = 'dead_stone_selection';
+            previewPos = null;
+            bannerDeadStones.classList.remove('hidden');
+            updateUI();
+        }
+
+        btnCancelDeadStones.addEventListener('click', () => {
+            soundManager.playClick();
+            gamePhase = 'playing';
+            consecutivePasses = 0;
+            deadStones.clear();
+            bannerDeadStones.classList.add('hidden');
+            render();
+        });
+
+        btnConfirmDeadStones.addEventListener('click', () => {
+            soundManager.playClick();
+            // 死に石をアゲハマに加算して盤面から除去
+            deadStones.forEach(idx => {
+                const player = board[idx];
+                if (player !== 0) {
+                    const opponent = player === 1 ? 2 : 1;
+                    captures[opponent]++;
+                    board[idx] = 0;
+                }
+            });
+            cleanUpDominoes();
+            deadStones.clear();
+            bannerDeadStones.classList.add('hidden');
+            gamePhase = 'ended';
+            endGameByScore();
+        });
 
         function handleResign() {
             soundManager.playClick();
@@ -1391,14 +1532,9 @@
             currentTheme = th;
             appBody.className = `min-h-screen flex flex-col items-center justify-between p-3 sm:p-6 select-none transition-colors duration-300 ${th.bg} ${th.text}`;
             statusCard.className = `w-full p-3.5 sm:p-4 rounded-xl flex flex-col gap-3 transition-colors text-sm sm:text-base border ${th.cardBg} ${th.border}`;
-            btnOrientation.className = `flex-1 py-2 px-3 text-xs sm:text-sm font-bold border rounded-lg active:scale-95 transition-all flex items-center justify-center gap-1.5 ${th.cardBg} ${th.border}`;
-            btnPass.className = `px-4 py-2 text-xs sm:text-sm font-medium border rounded-lg hover:opacity-80 active:scale-95 transition-all ${th.cardBg} ${th.border}`;
+            btnPass.className = `flex-1 py-2.5 px-4 text-xs sm:text-sm font-bold border rounded-xl hover:opacity-80 active:scale-95 transition-all shadow-sm ${th.cardBg} ${th.border}`;
             render();
         }
-
-        btnOrientation.addEventListener('click', () => {
-            soundManager.playClick();
-        });
 
         btnStartNewGame.addEventListener('click', () => {
             soundManager.playClick();
@@ -1429,8 +1565,11 @@
             consecutivePasses = 0;
             gameOver = false;
             gameResultData = null;
+            gamePhase = 'playing';
+            deadStones.clear();
             previewPos = null;
 
+            if (bannerDeadStones) bannerDeadStones.classList.add('hidden');
             resultModal.classList.add('hidden');
             bannerResult.classList.add('hidden');
 
