@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gomino - ゴミノ (Domino Go Engine)</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- PeerJS CDN for P2P Online Multiplayer -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+    <style>
+        * {
+            box-shadow: none !important;
+            text-shadow: none !important;
+            -webkit-tap-highlight-color: transparent;
+            border-radius: 0 !important;
+        }
+
+        body {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+            background-color: #ffffff;
+            color: #000000;
+            user-select: none;
+            touch-action: manipulation;
+            overflow-x: hidden;
+        }
+
+        .mono-btn {
+            background-color: #ffffff;
+            color: #000000;
+            border: 1.5px solid #000000;
+            font-weight: 700;
+            transition: background-color 0.1s, color 0.1s;
+        }
+
+        .mono-btn:hover:not(:disabled) {
+            background-color: #000000;
+            color: #ffffff;
+        }
+
+        .mono-btn:active:not(:disabled) {
+            background-color: #333333;
+            color: #ffffff;
+        }
+
+        .mono-btn-active {
+            background-color: #000000 !important;
+            color: #ffffff !important;
+        }
+
+        .mono-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        canvas {
+            touch-action: none;
+        }
+
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #ffffff; }
+        ::-webkit-scrollbar-thumb { background: #000000; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between antialiased bg-white text-black p-2 sm:p-4">
+
+    <header class="w-full max-w-2xl mx-auto mb-2 sm:mb-3 border-b-2 border-black pb-2">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+                <h1 class="text-xl sm:text-2xl font-black tracking-tighter uppercase">GOMINO</h1>
+                <p class="text-[10px] sm:text-xs font-mono uppercase tracking-wide">P2P Online Domino Go Engine // ゴミノ</p>
+            </div>
+
+            <!-- Global Mode & Size Toggles -->
+            <div class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                <!-- Board Size -->
+                <div class="flex border border-black">
+                    <button id="size-9" onclick="setBoardSize(9)" class="px-2 py-1 mono-btn mono-btn-active text-[11px]">9x9</button>
+                    <button id="size-13" onclick="setBoardSize(13)" class="px-2 py-1 mono-btn text-[11px]">13x13</button>
+                </div>
+
+                <!-- Mode Switcher -->
+                <div class="flex border border-black">
+                    <button id="mode-pvp" onclick="setGameMode('pvp')" class="px-2 py-1 mono-btn mono-btn-active text-[11px]">ローカル</button>
+                    <button id="mode-ai" onclick="setGameMode('ai')" class="px-2 py-1 mono-btn text-[11px]">VS AI</button>
+                    <button id="mode-online" onclick="setGameMode('online')" class="px-2 py-1 mono-btn text-[11px]">オンライン</button>
+                </div>
+
+                <!-- Sound Toggle -->
+                <button id="btn-sound" onclick="toggleSound()" class="px-2 py-1 mono-btn text-[11px]">
+                    SOUND: ON
+                </button>
+            </div>
+        </div>
+
+        <!-- Online P2P Controls Panel (Visible when Online mode selected) -->
+        <div id="online-panel" class="hidden mt-2 pt-2 border-t border-black font-mono text-xs bg-gray-50 p-2 border">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <button onclick="createOnlineRoom()" class="px-2.5 py-1 mono-btn text-[11px]">
+                        部屋を作成
+                    </button>
+                    <span class="text-gray-400">or</span>
+                    <input type="text" id="input-room-code" placeholder="部屋IDを入力" class="border border-black px-2 py-1 uppercase text-[11px] w-28 bg-white outline-none">
+                    <button onclick="joinOnlineRoom()" class="px-2.5 py-1 mono-btn text-[11px]">
+                        参加
+                    </button>
+                </div>
+
+                <!-- Room Info & Copy Button -->
+                <div id="room-info-box" class="hidden flex items-center gap-2">
+                    <span class="font-bold">ROOM: <span id="display-room-code" class="underline">-----</span></span>
+                    <button onclick="copyRoomLink()" class="px-2 py-0.5 mono-btn text-[10px]">
+                        招待URLコピー
+                    </button>
+                </div>
+            </div>
+
+            <!-- Connection Status Bar -->
+            <div id="online-status-text" class="mt-1.5 font-bold text-[11px] text-gray-700">
+                ステータス: オンライン対戦モード準備完了。「部屋を作成」または「参加」してください。
+            </div>
+        </div>
+    </header>
+
+    <main class="w-full max-w-2xl mx-auto flex-grow flex flex-col items-center justify-center gap-2">
+
+        <!-- Status & Score Display -->
+        <section class="w-full border-2 border-black p-2 font-mono text-xs flex items-center justify-between gap-2 bg-white">
+            <!-- Player 1 (Black) -->
+            <div id="p1-status" class="flex items-center gap-1.5 border-l-4 border-black pl-2">
+                <span class="inline-block w-3 h-3 bg-black rounded-full"></span>
+                <span id="p1-name" class="font-bold text-[11px] sm:text-xs">BLACK (先手)</span>
+                <span class="text-gray-600 ml-1 text-[11px]">アゲハ: <span id="p1-score" class="font-bold text-black">0</span></span>
+            </div>
+
+            <!-- Turn Badge -->
+            <div class="text-center font-bold">
+                <span id="turn-badge" class="bg-black text-white px-2 py-0.5 text-[11px]">TURN 1</span>
+                <span id="pass-badge" class="ml-1 text-gray-600 text-[10px]">PASS: 0/2</span>
+            </div>
+
+            <!-- Player 2 (White) -->
+            <div id="p2-status" class="flex items-center gap-1.5 border-l-4 border-gray-300 pl-2 opacity-40">
+                <span class="inline-block w-3 h-3 bg-white border border-black rounded-full"></span>
+                <span id="p2-name" class="font-bold text-[11px] sm:text-xs">WHITE (後手)</span>
+                <span class="text-gray-600 ml-1 text-[11px]">アゲハ: <span id="p2-score" class="font-bold text-black">0</span></span>
+            </div>
+        </section>
+
+        <!-- Floating Result Inspection Return Bar -->
+        <div id="inspection-bar" class="hidden w-full border-2 border-black bg-black text-white p-2 font-mono text-xs flex items-center justify-between">
+            <span class="font-bold tracking-wider text-[11px]">【対局終了】 盤面確認中</span>
+            <button onclick="reopenResultModal()" class="px-2 py-1 bg-white text-black font-bold text-[11px] hover:bg-gray-200">
+                結果ダイアログを表示
+            </button>
+        </div>
+
+        <!-- Canvas Board Container -->
+        <section class="relative w-full aspect-square border-2 border-black bg-white flex items-center justify-center">
+            <canvas id="board-canvas" class="w-full h-full block cursor-pointer"></canvas>
+
+            <!-- AI Thinking Overlay -->
+            <div id="ai-overlay" class="hidden absolute inset-0 bg-white/80 flex flex-col items-center justify-center font-mono font-bold border-2 border-black">
+                <div class="p-3 border-2 border-black bg-white tracking-widest text-xs sm:text-sm animate-pulse">
+                    [ AI THINKING... ]
+                </div>
+            </div>
+        </section>
+
+        <!-- Interaction Helper Box -->
+        <section class="w-full font-mono text-xs">
+            <div id="preview-pill" class="w-full p-2 border border-black bg-white font-bold truncate text-[11px] sm:text-xs text-center">
+                操作: マスとマスの間の「辺」をタップ / クリックして着手
+            </div>
+        </section>
+
+        <!-- Action Control Buttons -->
+        <section class="w-full grid grid-cols-4 gap-1.5 font-mono text-xs">
+            <button onclick="handlePass()" class="mono-btn py-2 font-bold text-[11px] sm:text-xs">
+                パス (P)
+            </button>
+            <button id="btn-undo" onclick="handleUndo()" class="mono-btn py-2 font-bold text-[11px] sm:text-xs">
+                待った
+            </button>
+            <button onclick="confirmResign()" class="mono-btn py-2 font-bold text-[11px] sm:text-xs">
+                投了
+            </button>
+            <button onclick="resetGame()" class="mono-btn py-2 font-bold text-[11px] sm:text-xs">
+                リセット
+            </button>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="w-full max-w-2xl mx-auto mt-2 border-t border-black pt-2 text-center font-mono text-[10px] text-gray-500">
+        GOMINO // EDGE-PLACED DOMINO GO SYSTEM // GITHUB PAGES READY
+    </footer>
+
+    <!-- Game Over Modal Dialog -->
+    <div id="game-over-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+        <div class="bg-white border-2 border-black p-5 max-w-sm w-full font-mono text-center">
+            <h2 id="modal-winner-title" class="text-xl font-black border-b-2 border-black pb-2 mb-2">BLACK WINS!</h2>
+            <p id="modal-reason-text" class="text-xs text-gray-700 mb-3">対局終了: 連続パス</p>
+
+            <div class="border border-black p-3 text-xs space-y-1.5 mb-4 bg-gray-50 text-left">
+                <div class="flex justify-between font-bold border-b border-gray-300 pb-1">
+                    <span>項目</span>
+                    <span>黒 (BLACK) / 白 (WHITE)</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>獲得アゲハ:</span>
+                    <span><span id="modal-p1-caps">0</span> / <span id="modal-p2-caps">0</span></span>
+                </div>
+                <div class="flex justify-between">
+                    <span>囲んだ地:</span>
+                    <span><span id="modal-p1-terr">0</span> / <span id="modal-p2-terr">0</span></span>
+                </div>
+                <div class="flex justify-between">
+                    <span>コミ (Komi):</span>
+                    <span>0 / <span id="modal-komi">2.5</span></span>
+                </div>
+                <div class="flex justify-between font-bold border-t border-black pt-1.5 text-sm">
+                    <span>総合得点:</span>
+                    <span><span id="modal-p1-total">0</span> / <span id="modal-p2-total">0</span></span>
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <button onclick="dismissModalForInspection()" class="w-full py-2 mono-btn font-bold text-xs">
+                    盤面を観戦・確認する
+                </button>
+                <button onclick="closeModal(); resetGame();" class="w-full py-2.5 mono-btn mono-btn-active font-bold text-xs">
+                    新しい対局を開始
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast Modal (No native alert) -->
+    <div id="toast-modal" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 font-mono text-xs border border-white z-50">
+        <span id="toast-message">通知メッセージ</span>
+    </div>
+
+    <script>
+        // --- GAME STATE ---
+        let boardSize = 9;
+        let board = [];
+        let pieceMap = [];
+        let pieces = [];
+        let nextPieceId = 1;
+
+        let currentPlayer = 1; // 1: Black, 2: White
+        let captureScores = { 1: 0, 2: 0 };
+        let consecutivePasses = 0;
+        let isGameOver = false;
+        let lastPlacedPieceId = null;
+
+        let hoveredEdge = null;
+        let selectedEdge = null;
+
+        let boardHistory = [];
+        let gameMode = 'pvp'; // 'pvp', 'ai', 'online'
+        let isAiThinking = false;
+        let soundEnabled = true;
+
+        // --- P2P ONLINE MULTIPLAYER STATE ---
+        let peer = null;
+        let conn = null;
+        let myOnlineRole = 1; // 1: Host (Black), 2: Guest (White)
+        let roomCode = null;
+
+        // Canvas Setup
+        const canvas = document.getElementById('board-canvas');
+        const ctx = canvas.getContext('2d');
+        let cellSize = 0;
+        let boardOffset = 0;
+
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playSound(freq1, freq2, type = 'sine', duration = 0.06) {
+            if (!soundEnabled) return;
+            initAudio();
+            try {
+                const now = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq1, now);
+                if (freq2) osc.frequency.exponentialRampToValueAtTime(freq2, now + duration);
+
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + duration);
+            } catch (e) {}
+        }
+
+        function playStoneSound() { playSound(480, 120, 'sine', 0.05); }
+        function playCaptureSound() { playSound(260, 780, 'triangle', 0.15); }
+        function playErrorSound() { playSound(140, 90, 'sawtooth', 0.12); }
+        function playFanfareSound() {
+            if (!soundEnabled) return;
+            initAudio();
+            try {
+                const now = audioCtx.currentTime;
+                [440, 554.37, 659.25, 880].forEach((freq, idx) => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.value = freq;
+                    gain.gain.setValueAtTime(0, now + idx * 0.06);
+                    gain.gain.linearRampToValueAtTime(0.2, now + idx * 0.06 + 0.02);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.06 + 0.25);
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.start(now + idx * 0.06);
+                    osc.stop(now + idx * 0.06 + 0.25);
+                });
+            } catch (e) {}
+        }
+
+        function toggleSound() {
+            soundEnabled = !soundEnabled;
+            document.getElementById('btn-sound').innerText = `SOUND: ${soundEnabled ? 'ON' : 'OFF'}`;
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast-modal');
+            document.getElementById('toast-message').innerText = msg;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+
+        function initGame() {
+            board = Array.from({ length: boardSize }, () => Array(boardSize).fill(0));
+            pieceMap = Array.from({ length: boardSize }, () => Array(boardSize).fill(null));
+            pieces = [];
+            nextPieceId = 1;
+            currentPlayer = 1;
+            captureScores = { 1: 0, 2: 0 };
+            consecutivePasses = 0;
+            isGameOver = false;
+            lastPlacedPieceId = null;
+            boardHistory = [];
+            hoveredEdge = null;
+            selectedEdge = null;
+
+            document.getElementById('inspection-bar').classList.add('hidden');
+            saveBoardState();
+            updateUI();
+            resizeCanvas();
+        }
+
+        function saveBoardState() {
+            const hash = board.map(r => r.join('')).join('');
+            boardHistory.push({
+                hash: hash,
+                board: JSON.parse(JSON.stringify(board)),
+                pieceMap: JSON.parse(JSON.stringify(pieceMap)),
+                pieces: JSON.parse(JSON.stringify(pieces)),
+                captureScores: { ...captureScores },
+                currentPlayer: currentPlayer,
+                consecutivePasses: consecutivePasses,
+                lastPlacedPieceId: lastPlacedPieceId
+            });
+        }
+
+        function getPieceCells(r, c, isVert) {
+            return isVert ? [{ r, c }, { r: r + 1, c }] : [{ r, c }, { r, c: c + 1 }];
+        }
+
+        function isValidCell(r, c) {
+            return r >= 0 && r < boardSize && c >= 0 && c < boardSize;
+        }
+
+        function getGroupAndLiberties(targetBoard, startR, startC) {
+            const color = targetBoard[startR][startC];
+            if (color === 0) return { group: [], liberties: new Set() };
+
+            const group = [];
+            const liberties = new Set();
+            const visited = Array.from({ length: boardSize }, () => Array(boardSize).fill(false));
+            const queue = [{ r: startR, c: startC }];
+            visited[startR][startC] = true;
+
+            const dr = [-1, 1, 0, 0];
+            const dc = [0, 0, -1, 1];
+
+            while (queue.length > 0) {
+                const { r, c } = queue.shift();
+                group.push({ r, c });
+
+                for (let i = 0; i < 4; i++) {
+                    const nr = r + dr[i];
+                    const nc = c + dc[i];
+
+                    if (isValidCell(nr, nc)) {
+                        if (targetBoard[nr][nc] === 0) {
+                            liberties.add(`${nr},${nc}`);
+                        } else if (targetBoard[nr][nc] === color && !visited[nr][nc]) {
+                            visited[nr][nc] = true;
+                            queue.push({ r: nr, c: nc });
+                        }
+                    }
+                }
+            }
+
+            return { group, liberties };
+        }
+
+        function checkMoveLegal(player, startR, startC, isVert, customBoard = null, customPieceMap = null) {
+            const curBoard = customBoard || board;
+            const curPieceMap = customPieceMap || pieceMap;
+            const cells = getPieceCells(startR, startC, isVert);
+
+            for (const cell of cells) {
+                if (!isValidCell(cell.r, cell.c)) return { legal: false, reason: "盤外エラー" };
+                if (curBoard[cell.r][cell.c] !== 0) return { legal: false, reason: "配置済み" };
+            }
+
+            const tempBoard = JSON.parse(JSON.stringify(curBoard));
+            for (const cell of cells) tempBoard[cell.r][cell.c] = player;
+
+            const opponent = player === 1 ? 2 : 1;
+            let capturedMass = 0;
+            const capturedPieceIds = new Set();
+
+            const dr = [-1, 1, 0, 0];
+            const dc = [0, 0, -1, 1];
+            const checkedCells = new Set();
+
+            for (const cell of cells) {
+                for (let i = 0; i < 4; i++) {
+                    const nr = cell.r + dr[i];
+                    const nc = cell.c + dc[i];
+
+                    if (isValidCell(nr, nc) && tempBoard[nr][nc] === opponent) {
+                        const key = `${nr},${nc}`;
+                        if (!checkedCells.has(key)) {
+                            const { group, liberties } = getGroupAndLiberties(tempBoard, nr, nc);
+                            group.forEach(g => checkedCells.add(`${g.r},${g.c}`));
+
+                            if (liberties.size === 0) {
+                                group.forEach(g => {
+                                    capturedMass++;
+                                    const pid = curPieceMap[g.r][g.c];
+                                    if (pid) capturedPieceIds.add(pid);
+                                    tempBoard[g.r][g.c] = 0;
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Suicide check
+            if (capturedMass === 0) {
+                const { liberties: ownLiberties } = getGroupAndLiberties(tempBoard, startR, startC);
+                if (ownLiberties.size === 0) return { legal: false, reason: "着手禁止手 (自殺手)" };
+            }
+
+            // Ko check
+            const hash = tempBoard.map(r => r.join('')).join('');
+            if (!customBoard && boardHistory.length >= 2) {
+                if (boardHistory.map(h => h.hash).includes(hash)) {
+                    return { legal: false, reason: "着手禁止手 (コウ / 同型反復)" };
+                }
+            }
+
+            return {
+                legal: true,
+                reason: "配置可能",
+                capturedPieceIds: Array.from(capturedPieceIds),
+                capturedMass,
+                resultHash: hash
+            };
+        }
+
+        function makeMoveOnEdge(edge, isRemote = false) {
+            if (isGameOver || isAiThinking || !edge) return false;
+
+            if (gameMode === 'online' && !isRemote) {
+                if (currentPlayer !== myOnlineRole) {
+                    playErrorSound();
+                    showToast("相手の番です");
+                    return false;
+                }
+            }
+
+            const check = checkMoveLegal(currentPlayer, edge.r, edge.c, edge.isVertical);
+            if (!check.legal) {
+                if (!isRemote) {
+                    playErrorSound();
+                    updatePreviewText(`不可: ${check.reason}`, false);
+                }
+                return false;
+            }
+
+            const cells = getPieceCells(edge.r, edge.c, edge.isVertical);
+            const newPiece = {
+                id: nextPieceId++,
+                color: currentPlayer,
+                cells,
+                isVertical: edge.isVertical,
+                edgeKey: edge.edgeKey
+            };
+
+            pieces.push(newPiece);
+            lastPlacedPieceId = newPiece.id;
+
+            cells.forEach(cell => {
+                board[cell.r][cell.c] = currentPlayer;
+                pieceMap[cell.r][cell.c] = newPiece.id;
+            });
+
+            if (check.capturedPieceIds && check.capturedPieceIds.length > 0) {
+                playCaptureSound();
+                let massCount = 0;
+                check.capturedPieceIds.forEach(pid => {
+                    const idx = pieces.findIndex(p => p.id === pid);
+                    if (idx !== -1) {
+                        pieces[idx].cells.forEach(cell => {
+                            board[cell.r][cell.c] = 0;
+                            pieceMap[cell.r][cell.c] = null;
+                            massCount++;
+                        });
+                        pieces.splice(idx, 1);
+                    }
+                });
+                captureScores[currentPlayer] += massCount;
+            } else {
+                playStoneSound();
+            }
+
+            consecutivePasses = 0;
+            currentPlayer = currentPlayer === 1 ? 2 : 1;
+            selectedEdge = null;
+
+            saveBoardState();
+            updateUI();
+            drawBoard();
+
+            // Broadcast move if Online
+            if (gameMode === 'online' && !isRemote && conn) {
+                conn.send({ type: 'MOVE', edge });
+            }
+
+            // AI turn
+            if (gameMode === 'ai' && currentPlayer === 2 && !isGameOver) {
+                triggerAiMove();
+            }
+
+            return true;
+        }
+
+        function handlePass(isRemote = false) {
+            if (isGameOver || isAiThinking) return;
+
+            if (gameMode === 'online' && !isRemote && currentPlayer !== myOnlineRole) {
+                showToast("相手の番です");
+                return;
+            }
+
+            initAudio();
+            consecutivePasses++;
+
+            if (consecutivePasses >= 2) {
+                calculateTerritoryAndEndGame("両者パスにより対局終了 (地計算)");
+                return;
+            }
+
+            currentPlayer = currentPlayer === 1 ? 2 : 1;
+            selectedEdge = null;
+            saveBoardState();
+            updateUI();
+
+            if (gameMode === 'online' && !isRemote && conn) {
+                conn.send({ type: 'PASS' });
+            }
+
+            if (gameMode === 'ai' && currentPlayer === 2 && !isGameOver) {
+                triggerAiMove();
+            }
+        }
+
+        function handleUndo() {
+            if (boardHistory.length <= 1 || isAiThinking || gameMode === 'online') return;
+
+            const undoSteps = (gameMode === 'ai' && boardHistory.length >= 3) ? 2 : 1;
+            for (let i = 0; i < undoSteps; i++) {
+                if (boardHistory.length > 1) boardHistory.pop();
+            }
+
+            const last = boardHistory[boardHistory.length - 1];
+            board = JSON.parse(JSON.stringify(last.board));
+            pieceMap = JSON.parse(JSON.stringify(last.pieceMap));
+            pieces = JSON.parse(JSON.stringify(last.pieces));
+            captureScores = { ...last.captureScores };
+            currentPlayer = last.currentPlayer;
+            consecutivePasses = last.consecutivePasses;
+            lastPlacedPieceId = last.lastPlacedPieceId;
+
+            isGameOver = false;
+            selectedEdge = null;
+            document.getElementById('inspection-bar').classList.add('hidden');
+            updateUI();
+            drawBoard();
+        }
+
+        function confirmResign() {
+            if (isGameOver) return;
+            const winner = currentPlayer === 1 ? "WHITE" : "BLACK";
+            if (gameMode === 'online' && conn) {
+                conn.send({ type: 'RESIGN' });
+            }
+            showEndGameModal(`${currentPlayer === 1 ? "黒" : "白"} の投了`, winner === "BLACK" ? "黒の投了勝ち" : "白の投了勝ち", {
+                p1Terr: 0, p2Terr: 0, p1Total: currentPlayer === 1 ? 0 : 999, p2Total: currentPlayer === 2 ? 0 : 999
+            });
+        }
+
+        function calculateTerritoryAndEndGame(reasonText) {
+            let blackTerritory = 0;
+            let whiteTerritory = 0;
+            const visited = Array.from({ length: boardSize }, () => Array(boardSize).fill(false));
+
+            for (let r = 0; r < boardSize; r++) {
+                for (let c = 0; c < boardSize; c++) {
+                    if (board[r][c] === 0 && !visited[r][c]) {
+                        const area = [];
+                        const queue = [{ r, c }];
+                        visited[r][c] = true;
+                        let touchesBlack = false;
+                        let touchesWhite = false;
+
+                        const dr = [-1, 1, 0, 0];
+                        const dc = [0, 0, -1, 1];
+
+                        while (queue.length > 0) {
+                            const curr = queue.shift();
+                            area.push(curr);
+
+                            for (let i = 0; i < 4; i++) {
+                                const nr = curr.r + dr[i];
+                                const nc = curr.c + dc[i];
+
+                                if (isValidCell(nr, nc)) {
+                                    if (board[nr][nc] === 0) {
+                                        if (!visited[nr][nc]) {
+                                            visited[nr][nc] = true;
+                                            queue.push({ r: nr, c: nc });
+                                        }
+                                    } else if (board[nr][nc] === 1) touchesBlack = true;
+                                    else if (board[nr][nc] === 2) touchesWhite = true;
+                                }
+                            }
+                        }
+
+                        if (touchesBlack && !touchesWhite) blackTerritory += area.length;
+                        else if (touchesWhite && !touchesBlack) whiteTerritory += area.length;
+                    }
+                }
+            }
+
+            const komi = 2.5;
+            const p1Total = captureScores[1] + blackTerritory;
+            const p2Total = captureScores[2] + whiteTerritory + komi;
+            const winnerText = p1Total > p2Total ? "BLACK WINS!" : "WHITE WINS!";
+
+            showEndGameModal(reasonText, winnerText, {
+                p1Terr: blackTerritory, p2Terr: whiteTerritory, komi, p1Total, p2Total
+            });
+        }
+
+        function showEndGameModal(reasonText, winnerText, scores) {
+            isGameOver = true;
+            playFanfareSound();
+
+            document.getElementById('modal-winner-title').innerText = winnerText;
+            document.getElementById('modal-reason-text').innerText = reasonText;
+            document.getElementById('modal-p1-caps').innerText = captureScores[1];
+            document.getElementById('modal-p2-caps').innerText = captureScores[2];
+            document.getElementById('modal-p1-terr').innerText = scores.p1Terr || 0;
+            document.getElementById('modal-p2-terr').innerText = scores.p2Terr || 0;
+            document.getElementById('modal-komi').innerText = scores.komi !== undefined ? scores.komi : 2.5;
+            document.getElementById('modal-p1-total').innerText = scores.p1Total;
+            document.getElementById('modal-p2-total').innerText = scores.p2Total;
+
+            document.getElementById('game-over-modal').classList.remove('hidden');
+        }
+
+        function dismissModalForInspection() {
+            document.getElementById('game-over-modal').classList.add('hidden');
+            document.getElementById('inspection-bar').classList.remove('hidden');
+        }
+
+        function reopenResultModal() {
+            document.getElementById('game-over-modal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('game-over-modal').classList.add('hidden');
+        }
+
+        function initPeerJS() {
+            if (peer) return;
+            peer = new Peer();
+
+            peer.on('error', (err) => {
+                showToast("通信エラーが発生しました: " + err.type);
+                document.getElementById('online-status-text').innerText = "通信エラー: " + err.type;
+            });
+        }
+
+        function createOnlineRoom() {
+            setGameMode('online');
+            initPeerJS();
+
+            roomCode = Math.random().toString(36).substring(2, 7).toUpperCase();
+            const fullPeerId = `gomino-v1-${roomCode}`;
+
+            if (peer) peer.destroy();
+            peer = new Peer(fullPeerId);
+
+            document.getElementById('online-status-text').innerText = "部屋を作成中...";
+
+            peer.on('open', () => {
+                myOnlineRole = 1; // Host is Black
+                document.getElementById('room-info-box').classList.remove('hidden');
+                document.getElementById('display-room-code').innerText = roomCode;
+                document.getElementById('online-status-text').innerText = `[待機中] 部屋ID: ${roomCode} | 相手の参加を待っています...`;
+                showToast(`部屋 ${roomCode} を作成しました`);
+            });
+
+            peer.on('connection', (c) => {
+                conn = c;
+                setupConnectionListeners();
+                document.getElementById('online-status-text').innerText = `[対局中] 相手が接続しました！ あなたは【黒番 (先手)】です。`;
+                showToast("対戦相手が接続しました！");
+            });
+        }
+
+        function joinOnlineRoom() {
+            setGameMode('online');
+            const codeInput = document.getElementById('input-room-code').value.trim().toUpperCase();
+            if (!codeInput) {
+                showToast("部屋IDを入力してください");
+                return;
+            }
+
+            roomCode = codeInput;
+            const targetPeerId = `gomino-v1-${roomCode}`;
+
+            if (peer) peer.destroy();
+            peer = new Peer();
+
+            document.getElementById('online-status-text').innerText = "接続中...";
+
+            peer.on('open', () => {
+                myOnlineRole = 2; // Guest is White
+                conn = peer.connect(targetPeerId);
+                setupConnectionListeners();
+
+                document.getElementById('room-info-box').classList.remove('hidden');
+                document.getElementById('display-room-code').innerText = roomCode;
+            });
+        }
+
+        function setupConnectionListeners() {
+            conn.on('open', () => {
+                document.getElementById('online-status-text').innerText = `[対局中] 接続完了！ あなたは【${myOnlineRole === 1 ? '黒番 (先手)' : '白番 (後手)'}】です。`;
+                updateUI();
+            });
+
+            conn.on('data', (data) => {
+                if (data.type === 'MOVE') {
+                    makeMoveOnEdge(data.edge, true);
+                } else if (data.type === 'PASS') {
+                    handlePass(true);
+                } else if (data.type === 'RESIGN') {
+                    showToast("相手が投了しました");
+                    showEndGameModal("相手の投了", myOnlineRole === 1 ? "黒の投了勝ち" : "白の投了勝ち", {
+                        p1Terr: 0, p2Terr: 0, p1Total: myOnlineRole === 1 ? 999 : 0, p2Total: myOnlineRole === 2 ? 999 : 0
+                    });
+                }
+            });
+
+            conn.on('close', () => {
+                document.getElementById('online-status-text').innerText = "相手との接続が切断されました。";
+                showToast("対戦相手の接続が切れました");
+            });
+        }
+
+        function copyRoomLink() {
+            if (!roomCode) return;
+            const url = `${window.location.origin}${window.location.pathname}?room=${roomCode}`;
+            
+            // Clipboard fallback
+            const tempInput = document.createElement('input');
+            tempInput.value = url;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+
+            showToast("招待URLをクリップボードにコピーしました");
+        }
+
+        function triggerAiMove() {
+            isAiThinking = true;
+            document.getElementById('ai-overlay').classList.remove('hidden');
+
+            setTimeout(() => {
+                const bestEdge = calculateStrongAiEdge();
+                isAiThinking = false;
+                document.getElementById('ai-overlay').classList.add('hidden');
+
+                if (bestEdge) {
+                    makeMoveOnEdge(bestEdge);
+                } else {
+                    handlePass();
+                }
+            }, 250);
+        }
+
+        function calculateStrongAiEdge() {
+            const aiPlayer = 2;
+            const legalEdges = [];
+
+            for (let r = 0; r < boardSize; r++) {
+                for (let c = 0; c < boardSize; c++) {
+                    if (c < boardSize - 1) {
+                        const checkH = checkMoveLegal(aiPlayer, r, c, false);
+                        if (checkH.legal) legalEdges.push({ r, c, isVertical: false, capturedMass: checkH.capturedMass || 0 });
+                    }
+                    if (r < boardSize - 1) {
+                        const checkV = checkMoveLegal(aiPlayer, r, c, true);
+                        if (checkV.legal) legalEdges.push({ r, c, isVertical: true, capturedMass: checkV.capturedMass || 0 });
+                    }
+                }
+            }
+
+            if (legalEdges.length === 0) return null;
+
+            // Score evaluation
+            legalEdges.forEach(edge => {
+                let score = edge.capturedMass * 500;
+                const simBoard = JSON.parse(JSON.stringify(board));
+                const cells = getPieceCells(edge.r, edge.c, edge.isVertical);
+                cells.forEach(cell => simBoard[cell.r][cell.c] = aiPlayer);
+
+                const { liberties } = getGroupAndLiberties(simBoard, edge.r, edge.c);
+                if (liberties.size === 1 && edge.capturedMass === 0) score -= 400; // Self-Atari
+                else score += liberties.size * 10;
+
+                edge.score = score + Math.random() * 5;
+            });
+
+            legalEdges.sort((a, b) => b.score - a.score);
+            return legalEdges[0];
+        }
+
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            const rect = container.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+
+            const size = rect.width;
+            boardOffset = size * 0.08;
+            cellSize = (size - boardOffset * 2) / (boardSize - 1);
+
+            drawBoard();
+        }
+
+        function getNearestEdgeCoords(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+
+            const gx = (x - boardOffset) / cellSize;
+            const gy = (y - boardOffset) / cellSize;
+
+            let closestEdge = null;
+            let minDistSq = 0.45;
+
+            // Check Horizontal Edges
+            const rH = Math.round(gy);
+            const cH = Math.floor(gx);
+
+            if (rH >= 0 && rH < boardSize && cH >= 0 && cH < boardSize - 1) {
+                const distSq = (gx - (cH + 0.5)) ** 2 + (gy - rH) ** 2;
+                if (distSq < minDistSq) {
+                    minDistSq = distSq;
+                    closestEdge = { r: rH, c: cH, isVertical: false, edgeKey: `H_${rH}_${cH}` };
+                }
+            }
+
+            // Check Vertical Edges
+            const rV = Math.floor(gy);
+            const cV = Math.round(gx);
+
+            if (rV >= 0 && rV < boardSize - 1 && cV >= 0 && cV < boardSize) {
+                const distSq = (gx - cV) ** 2 + (gy - (rV + 0.5)) ** 2;
+                if (distSq < minDistSq) {
+                    minDistSq = distSq;
+                    closestEdge = { r: rV, c: cV, isVertical: true, edgeKey: `V_${rV}_${cV}` };
+                }
+            }
+
+            return closestEdge;
+        }
+
+        function drawBoard() {
+            const w = canvas.width / (window.devicePixelRatio || 1);
+            const h = canvas.height / (window.devicePixelRatio || 1);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+
+            // Grid Lines
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 1.5;
+
+            for (let i = 0; i < boardSize; i++) {
+                ctx.beginPath();
+                ctx.moveTo(boardOffset, boardOffset + i * cellSize);
+                ctx.lineTo(boardOffset + (boardSize - 1) * cellSize, boardOffset + i * cellSize);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(boardOffset + i * cellSize, boardOffset);
+                ctx.lineTo(boardOffset + i * cellSize, boardOffset + (boardSize - 1) * cellSize);
+                ctx.stroke();
+            }
+
+            // Hoshi Stars
+            const starPoints = boardSize === 9 ? [[2, 2], [2, 6], [4, 4], [6, 2], [6, 6]] :
+                              [[3, 3], [3, 9], [6, 6], [9, 3], [9, 9]];
+
+            ctx.fillStyle = '#000000';
+            starPoints.forEach(([r, c]) => {
+                ctx.beginPath();
+                ctx.arc(boardOffset + c * cellSize, boardOffset + r * cellSize, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Placed Dominoes
+            pieces.forEach(p => {
+                drawCapsulePiece(p.cells, p.color, p.isVertical, p.id === lastPlacedPieceId);
+            });
+
+            // Preview Ghost
+            const activeEdge = selectedEdge || hoveredEdge;
+            if (activeEdge && !isGameOver && !isAiThinking) {
+                const ghostCells = getPieceCells(activeEdge.r, activeEdge.c, activeEdge.isVertical);
+                const check = checkMoveLegal(currentPlayer, activeEdge.r, activeEdge.c, activeEdge.isVertical);
+                updatePreviewText(`配置プレビュー: ${check.reason}`, check.legal);
+                drawCapsuleGhost(ghostCells, activeEdge.isVertical, check.legal);
+            }
+        }
+
+        function drawCapsulePiece(cells, color, isVert, isLast) {
+            ctx.save();
+            const x1 = boardOffset + cells[0].c * cellSize;
+            const y1 = boardOffset + cells[0].r * cellSize;
+            const x2 = boardOffset + cells[1].c * cellSize;
+            const y2 = boardOffset + cells[1].r * cellSize;
+            const radius = cellSize * 0.38;
+
+            ctx.beginPath();
+            if (isVert) {
+                ctx.arc(x1, y1, radius, Math.PI, 0, false);
+                ctx.arc(x2, y2, radius, 0, Math.PI, false);
+            } else {
+                ctx.arc(x1, y1, radius, Math.PI * 0.5, Math.PI * 1.5, false);
+                ctx.arc(x2, y2, radius, Math.PI * 1.5, Math.PI * 0.5, false);
+            }
+            ctx.closePath();
+
+            if (color === 1) { // Black
+                ctx.fillStyle = '#000000';
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                if (isVert) {
+                    ctx.moveTo(x1 - radius * 0.8, (y1 + y2) / 2);
+                    ctx.lineTo(x1 + radius * 0.8, (y1 + y2) / 2);
+                } else {
+                    ctx.moveTo((x1 + x2) / 2, y1 - radius * 0.8);
+                    ctx.lineTo((x1 + x2) / 2, y1 + radius * 0.8);
+                }
+                ctx.stroke();
+
+                if (isLast) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc((x1 + x2) / 2, (y1 + y2) / 2, 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else { // White
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                if (isVert) {
+                    ctx.moveTo(x1 - radius * 0.8, (y1 + y2) / 2);
+                    ctx.lineTo(x1 + radius * 0.8, (y1 + y2) / 2);
+                } else {
+                    ctx.moveTo((x1 + x2) / 2, y1 - radius * 0.8);
+                    ctx.lineTo((x1 + x2) / 2, y1 + radius * 0.8);
+                }
+                ctx.stroke();
+
+                if (isLast) {
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    ctx.arc((x1 + x2) / 2, (y1 + y2) / 2, 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawCapsuleGhost(cells, isVert, isLegal) {
+            ctx.save();
+            const x1 = boardOffset + cells[0].c * cellSize;
+            const y1 = boardOffset + cells[0].r * cellSize;
+            const x2 = boardOffset + cells[1].c * cellSize;
+            const y2 = boardOffset + cells[1].r * cellSize;
+            const radius = cellSize * 0.38;
+
+            ctx.beginPath();
+            if (isVert) {
+                ctx.arc(x1, y1, radius, Math.PI, 0, false);
+                ctx.arc(x2, y2, radius, 0, Math.PI, false);
+            } else {
+                ctx.arc(x1, y1, radius, Math.PI * 0.5, Math.PI * 1.5, false);
+                ctx.arc(x2, y2, radius, Math.PI * 1.5, Math.PI * 0.5, false);
+            }
+            ctx.closePath();
+
+            if (isLegal) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+                ctx.fill();
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.stroke();
+            } else {
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+                ctx.fill();
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([2, 2]);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            const edge = getNearestEdgeCoords(e.clientX, e.clientY);
+            if (!edge && !hoveredEdge) return;
+            if (edge && hoveredEdge && edge.edgeKey === hoveredEdge.edgeKey) return;
+            hoveredEdge = edge;
+            drawBoard();
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            hoveredEdge = null;
+            if (!selectedEdge) updatePreviewText("操作: マスとマスの間の「辺」をタップ / クリックして着手", true);
+            drawBoard();
+        });
+
+        function handleInteractionAtPoint(clientX, clientY, isTouch = false) {
+            initAudio();
+            const edge = getNearestEdgeCoords(clientX, clientY);
+            if (!edge) return;
+
+            if (isTouch) {
+                if (selectedEdge && selectedEdge.edgeKey === edge.edgeKey) {
+                    makeMoveOnEdge(edge);
+                } else {
+                    selectedEdge = edge;
+                    hoveredEdge = edge;
+                    drawBoard();
+                }
+            } else {
+                makeMoveOnEdge(edge);
+            }
+        }
+
+        canvas.addEventListener('click', (e) => handleInteractionAtPoint(e.clientX, e.clientY, false));
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (e.touches.length > 0) handleInteractionAtPoint(e.touches[0].clientX, e.touches[0].clientY, true);
+        }, { passive: false });
+
+        function updateUI() {
+            const p1Status = document.getElementById('p1-status');
+            const p2Status = document.getElementById('p2-status');
+
+            if (currentPlayer === 1) {
+                p1Status.className = "flex items-center gap-1.5 border-l-4 border-black pl-2 opacity-100";
+                p2Status.className = "flex items-center gap-1.5 border-l-4 border-gray-300 pl-2 opacity-40";
+            } else {
+                p1Status.className = "flex items-center gap-1.5 border-l-4 border-gray-300 pl-2 opacity-40";
+                p2Status.className = "flex items-center gap-1.5 border-l-4 border-black pl-2 opacity-100";
+            }
+
+            document.getElementById('p1-score').innerText = captureScores[1];
+            document.getElementById('p2-score').innerText = captureScores[2];
+            document.getElementById('turn-badge').innerText = `TURN ${boardHistory.length}`;
+            document.getElementById('pass-badge').innerText = `PASS: ${consecutivePasses}/2`;
+
+            document.getElementById('btn-undo').disabled = (boardHistory.length <= 1 || gameMode === 'online');
+        }
+
+        function updatePreviewText(msg, isLegal) {
+            const pill = document.getElementById('preview-pill');
+            pill.innerText = msg;
+            pill.className = isLegal ?
+                "w-full p-2 border border-black bg-white font-bold truncate text-[11px] sm:text-xs text-center text-black" :
+                "w-full p-2 border border-black bg-black font-bold truncate text-[11px] sm:text-xs text-center text-white";
+        }
+
+        function setBoardSize(size) {
+            if (boardSize === size) return;
+            boardSize = size;
+            document.getElementById('size-9').className = size === 9 ? 'px-2 py-1 mono-btn mono-btn-active text-[11px]' : 'px-2 py-1 mono-btn text-[11px]';
+            document.getElementById('size-13').className = size === 13 ? 'px-2 py-1 mono-btn mono-btn-active text-[11px]' : 'px-2 py-1 mono-btn text-[11px]';
+            resetGame();
+        }
+
+        function setGameMode(mode) {
+            gameMode = mode;
+            document.getElementById('mode-pvp').className = mode === 'pvp' ? 'px-2 py-1 mono-btn mono-btn-active text-[11px]' : 'px-2 py-1 mono-btn text-[11px]';
+            document.getElementById('mode-ai').className = mode === 'ai' ? 'px-2 py-1 mono-btn mono-btn-active text-[11px]' : 'px-2 py-1 mono-btn text-[11px]';
+            document.getElementById('mode-online').className = mode === 'online' ? 'px-2 py-1 mono-btn mono-btn-active text-[11px]' : 'px-2 py-1 mono-btn text-[11px]';
+
+            const onlinePanel = document.getElementById('online-panel');
+            const p2Name = document.getElementById('p2-name');
+
+            if (mode === 'online') {
+                onlinePanel.classList.remove('hidden');
+                p2Name.innerText = "WHITE (オンライン)";
+            } else {
+                onlinePanel.classList.add('hidden');
+                p2Name.innerText = mode === 'ai' ? "WHITE (AI)" : "WHITE (後手)";
+            }
+
+            resetGame();
+        }
+
+        function resetGame() {
+            initGame();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        window.onload = function() {
+            initGame();
+
+            // Auto-join from URL parameter ?room=XXXXX
+            const urlParams = new URLSearchParams(window.location.search);
+            const roomParam = urlParams.get('room');
+            if (roomParam) {
+                document.getElementById('input-room-code').value = roomParam;
+                setGameMode('online');
+                joinOnlineRoom();
+            }
+        };
+    </script>
+</body>
+</html>
